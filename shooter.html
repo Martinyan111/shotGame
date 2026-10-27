@@ -1,0 +1,940 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<title>赛博霓虹弹幕｜竖屏手机版</title>
+<style>
+*{margin:0;padding:0;box-sizing:border-box;font-family:Microsoft Yahei, sans-serif}
+body{
+    background:#050510;
+    min-height:100vh;
+    display:flex;
+    flex-direction:column;
+    align-items:center;
+    justify-content:center;
+    color:#fff;
+    overflow:hidden;
+}
+.title{
+    font-size:22px;
+    text-shadow:0 0 15px #0ff,0 0 30px #0ff;
+    margin-bottom:6px;
+    letter-spacing:2px;
+    text-align:center;
+}
+.info-bar{
+    display:flex;gap:8px;margin-bottom:6px;font-size:13px;
+    flex-wrap:wrap;
+    justify-content:center;
+}
+.info-item{
+    background:rgba(0,255,255,0.08);
+    border:1px solid rgba(0,255,255,0.3);
+    padding:3px 8px;border-radius:30px;
+}
+#gameCanvas{
+    border:3px solid #0ff;
+    border-radius:12px;
+    box-shadow:0 0 40px rgba(0,255,255,0.35);
+    max-width:92vw;
+    max-height:80vh;
+    touch-action:none;
+}
+.tip{margin-top:6px;color:#88ccdd;font-size:12px;text-align:center;line-height:1.3}
+</style>
+</head>
+<body>
+<div class="game-wrap">
+    <div class="title">⚡赛博霓虹弹幕｜竖屏版⚡</div>
+    <div class="info-bar">
+        <div class="info-item">分数：<span id="score">0</span></div>
+        <div class="info-item">生命：<span id="hp">3</span></div>
+        <div class="info-item">BOSS：<span id="bossStatus">未登场</span></div>
+        <div class="info-item">连击：<span id="combo">0</span></div>
+        <div class="info-item">倍率：<span id="multi">1.0</span></div>
+        <div class="info-item">火力：<span id="powerLv">1</span></div>
+    </div>
+    <canvas id="gameCanvas" width="420" height="720"></canvas>
+    <div class="tip">电脑：方向键移动｜空格射击｜P暂停｜S存档 L读档<br>手机：手指拖动飞船，长按屏幕持续射击，游戏结束点击画布重启</div>
+</div>
+
+<script>
+const canvas = document.getElementById("gameCanvas");
+const ctx = canvas.getContext("2d");
+const scoreDom = document.getElementById("score");
+const hpDom = document.getElementById("hp");
+const bossStatusDom = document.getElementById("bossStatus");
+const comboDom = document.getElementById("combo");
+const multiDom = document.getElementById("multi");
+const powerLvDom = document.getElementById("powerLv");
+
+// ========== WebAudio音效引擎 ==========
+let audioCtx = null;
+function initAudio(){
+    if(audioCtx) return;
+    audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+}
+function playSound(type){
+    if(!audioCtx) return;
+    const osc = audioCtx.createOscillator();
+    const gain = audioCtx.createGain();
+    osc.connect(gain);
+    gain.connect(audioCtx.destination);
+    const t = audioCtx.currentTime;
+    switch(type){
+        case "shoot":
+            osc.type="square";osc.frequency.setValueAtTime(880,t);
+            osc.frequency.exponentialRampToValueAtTime(220,t+0.08);
+            gain.gain.setValueAtTime(0.08,t);
+            gain.gain.exponentialRampToValueAtTime(0.001,t+0.08);
+            osc.start(t);osc.stop(t+0.08);break;
+        case "explode":
+            osc.type="sawtooth";osc.frequency.setValueAtTime(180,t);
+            osc.frequency.exponentialRampToValueAtTime(40,t+0.25);
+            gain.gain.setValueAtTime(0.15,t);
+            gain.gain.exponentialRampToValueAtTime(0.001,t+0.25);
+            osc.start(t);osc.stop(t+0.25);break;
+        case "pickup":
+            osc.type="sine";osc.frequency.setValueAtTime(520,t);
+            osc.frequency.exponentialRampToValueAtTime(1040,t+0.12);
+            gain.gain.setValueAtTime(0.09,t);
+            gain.gain.exponentialRampToValueAtTime(0.001,t+0.12);
+            osc.start(t);osc.stop(t+0.12);break;
+        case "bossAppear":
+            osc.type="sawtooth";osc.frequency.setValueAtTime(110,t);
+            osc.frequency.exponentialRampToValueAtTime(220,t+0.4);
+            gain.gain.setValueAtTime(0.2,t);
+            gain.gain.exponentialRampToValueAtTime(0.001,t+0.4);
+            osc.start(t);osc.stop(t+0.4);break;
+        case "bossDead":
+            osc.type="sawtooth";osc.frequency.setValueAtTime(300,t);
+            osc.frequency.exponentialRampToValueAtTime(60,t+0.6);
+            gain.gain.setValueAtTime(0.22,t);
+            gain.gain.exponentialRampToValueAtTime(0.001,t+0.6);
+            osc.start(t);osc.stop(t+0.6);break;
+        case "gameover":
+            osc.type="square";osc.frequency.setValueAtTime(220,t);
+            osc.frequency.exponentialRampToValueAtTime(55,t+0.5);
+            gain.gain.setValueAtTime(0.18,t);
+            gain.gain.exponentialRampToValueAtTime(0.001,t+0.5);
+            osc.start(t);osc.stop(t+0.5);break;
+        case "pause":
+            osc.type="sine";osc.frequency.setValueAtTime(330,t);
+            osc.frequency.setValueAtTime(440,t+0.1);
+            gain.gain.setValueAtTime(0.1,t);
+            gain.gain.exponentialRampToValueAtTime(0.001,t+0.2);
+            osc.start(t);osc.stop(t+0.2);break;
+        case "save":
+            osc.type="sine";osc.frequency.setValueAtTime(660,t);
+            osc.frequency.setValueAtTime(880,t+0.15);
+            gain.gain.setValueAtTime(0.1,t);
+            gain.gain.exponentialRampToValueAtTime(0.001,t+0.25);
+            osc.start(t);osc.stop(t+0.25);break;
+        case "load":
+            osc.type="sine";osc.frequency.setValueAtTime(440,t);
+            osc.frequency.setValueAtTime(660,t+0.15);
+            gain.gain.setValueAtTime(0.1,t);
+            gain.gain.exponentialRampToValueAtTime(0.001,t+0.25);
+            osc.start(t);osc.stop(t+0.25);break;
+    }
+}
+
+// ========== 全局游戏状态 ==========
+const game = {
+    score:0, hp:3, maxHp:5, gameOver:false, bossActive:false,
+    screenShake:0, power:1, powerMax:3, //power 1~3级上限
+    state:"menu", // menu / play / pause
+    menuTimer:180,
+    invincible:0,
+    combo:0,
+    comboTimer:0,
+    multiplier:1.0
+};
+const keys = {};
+let starsLayers = []; // 【视差星空】三层星空
+let player;
+let bullets = [];
+let enemyBullets = [];
+let enemies = [];
+let particles = [];
+let powerUps = [];
+let boss = null;
+let shootCooldown = 0;
+let enemySpawnTimer = null;
+const SHOOT_DELAY = 6;
+let fps = 0;
+let lastTime = performance.now();
+
+// ========== 触摸控制变量 ==========
+let touchActive = false;
+let touchX = 0;
+let touchY = 0;
+
+// 触摸坐标转换（画布缩放后映射）
+function getCanvasTouchPos(e){
+    const rect = canvas.getBoundingClientRect();
+    const touch = e.touches[0];
+    const scaleX = canvas.width / rect.width;
+    const scaleY = canvas.height / rect.height;
+    return {
+        x: (touch.clientX - rect.left) * scaleX,
+        y: (touch.clientY - rect.top) * scaleY
+    }
+}
+
+canvas.addEventListener("touchstart",(e)=>{
+    e.preventDefault();
+    initAudio();
+    // =========【修复点】游戏结束时，点击画布直接重启游戏 =========
+    if(game.gameOver){
+        resetGame();
+        startEnemySpawn();
+        return;
+    }
+    touchActive = true;
+    const pos = getCanvasTouchPos(e);
+    touchX = pos.x;
+    touchY = pos.y;
+});
+canvas.addEventListener("touchmove",(e)=>{
+    e.preventDefault();
+    if(game.gameOver) return;
+    const pos = getCanvasTouchPos(e);
+    touchX = pos.x;
+    touchY = pos.y;
+});
+canvas.addEventListener("touchend",(e)=>{
+    e.preventDefault();
+    touchActive = false;
+});
+canvas.addEventListener("touchcancel",(e)=>{
+    e.preventDefault();
+    touchActive = false;
+});
+
+// ========== 视差星空初始化（3层） ==========
+function initParallaxStars(){
+    starsLayers = [
+        {speed:0.2, list:[]}, //远景 最慢
+        {speed:0.6, list:[]}, //中景
+        {speed:1.2, list:[]}  //近景 最快
+    ];
+    for(let layer of starsLayers){
+        for(let i=0;i<60;i++){
+            layer.list.push({
+                x:Math.random()*canvas.width,
+                y:Math.random()*canvas.height,
+                size:Math.random()*1.2+0.3
+            })
+        }
+    }
+}
+
+// ========== 玩家类 ==========
+class Player{
+    constructor(){
+        this.w=32;this.h=32;
+        this.x=canvas.width/2;
+        this.y=canvas.height-90;
+        this.speed=6;
+    }
+    update(){
+        //电脑键盘控制
+        if(keys["ArrowUp"] && this.y>20) this.y -= this.speed;
+        if(keys["ArrowDown"] && this.y<canvas.height-this.h) this.y += this.speed;
+        if(keys["ArrowLeft"] && this.x>20) this.x -= this.speed;
+        if(keys["ArrowRight"] && this.x<canvas.width-this.w) this.x += this.speed;
+
+        //手机触摸控制：飞船跟随手指
+        if(touchActive && game.state==="play" && !game.gameOver){
+            const dx = touchX - this.x;
+            const dy = touchY - this.y;
+            this.x += dx * 0.18;
+            this.y += dy * 0.18;
+            //边界限制
+            this.x = Math.max(20, Math.min(canvas.width-20, this.x));
+            this.y = Math.max(20, Math.min(canvas.height-this.h, this.y));
+        }
+
+        //尾焰粒子
+        if(keys["ArrowUp"] || keys["ArrowDown"] || keys["ArrowLeft"] || keys["ArrowRight"] || touchActive){
+            particles.push({
+                x:this.x + (Math.random()-0.5)*10,
+                y:this.y+16,
+                vx:(Math.random()-0.5)*0.4,
+                vy:Math.random()*2+1,
+                life:18,
+                color:"#0ff",
+                size:Math.random()*3+1
+            })
+        }
+    }
+    draw(){
+        if(game.invincible>0 && Math.floor(game.invincible/4)%2 ===0) return;
+        ctx.save();
+        ctx.shadowBlur=18;ctx.shadowColor="#0ff";
+        ctx.fillStyle="#0ff";
+        ctx.beginPath();
+        ctx.moveTo(this.x, this.y-16);
+        ctx.lineTo(this.x-16, this.y+16);
+        ctx.lineTo(this.x+16, this.y+16);
+        ctx.closePath();
+        ctx.fill();
+        ctx.restore();
+    }
+}
+
+// ========== 多种敌人 ==========
+//类型1：普通直线小怪
+class EnemyNormal{
+    constructor(){
+        this.w=28;this.h=28;
+        this.x=Math.random()*(canvas.width-40)+20;
+        this.y=-30;
+        this.speed=2+game.score/400;
+        this.shootTimer=Math.random()*80;
+        this.type="normal";
+    }
+    update(){
+        this.y += this.speed;
+        this.shootTimer--;
+        if(this.shootTimer <=0){
+            enemyBullets.push({x:this.x, y:this.y+14, r:5, vy:4});
+            this.shootTimer = 100 + Math.random()*60;
+        }
+    }
+    draw(){
+        ctx.save();
+        ctx.shadowBlur=12;ctx.shadowColor="#f28";
+        ctx.fillStyle="#f28";
+        ctx.fillRect(this.x-14,this.y-14,this.w,this.h);
+        ctx.restore();
+    }
+}
+//类型2：左右摇摆敌人，双发子弹
+class EnemySwing{
+    constructor(){
+        this.w=30;this.h=30;
+        this.x=Math.random()*(canvas.width-40)+20;
+        this.y=-30;
+        this.speed=1.6;
+        this.shootTimer=Math.random()*90;
+        this.baseX=this.x;
+        this.t=0;
+        this.type="swing";
+    }
+    update(){
+        this.t +=0.04;
+        this.x = this.baseX + Math.sin(this.t)*45;
+        this.y += this.speed;
+        this.shootTimer--;
+        if(this.shootTimer <=0){
+            enemyBullets.push({x:this.x-10, y:this.y+14, r:5, vy:4});
+            enemyBullets.push({x:this.x+10, y:this.y+14, r:5, vy:4});
+            this.shootTimer = 110 + Math.random()*70;
+        }
+    }
+    draw(){
+        ctx.save();
+        ctx.shadowBlur=14;ctx.shadowColor="#ffaa00";
+        ctx.fillStyle="#ffaa00";
+        ctx.beginPath();
+        ctx.arc(this.x,this.y,15,0,Math.PI*2);
+        ctx.fill();
+        ctx.restore();
+    }
+}
+//类型3：高速突袭敌人，俯冲快弹
+class EnemyRush{
+    constructor(){
+        this.w=24;this.h=24;
+        this.x=Math.random()*(canvas.width-40)+20;
+        this.y=-30;
+        this.speed=3.5;
+        this.shootTimer=Math.random()*70;
+        this.type="rush";
+    }
+    update(){
+        this.y += this.speed;
+        this.shootTimer--;
+        if(this.shootTimer <=0){
+            enemyBullets.push({x:this.x, y:this.y+12, r:4, vy:6});
+            this.shootTimer = 80 + Math.random()*50;
+        }
+    }
+    draw(){
+        ctx.save();
+        ctx.shadowBlur=14;ctx.shadowColor="#ff3366";
+        ctx.fillStyle="#ff3366";
+        ctx.beginPath();
+        ctx.moveTo(this.x,this.y-12);
+        ctx.lineTo(this.x-12,this.y+12);
+        ctx.lineTo(this.x+12,this.y+12);
+        ctx.closePath();
+        ctx.fill();
+        ctx.restore();
+    }
+}
+
+// ========== BOSS ==========
+class Boss{
+    constructor(){
+        this.w=90;this.h=50;
+        this.x=canvas.width/2;
+        this.y=-80;
+        this.hp=120;
+        this.maxHp=120;
+        this.dir=1;
+        this.shootTimer=0;
+    }
+    update(){
+        if(this.y < 90) this.y +=1.2;
+        else{
+            this.x += this.dir * 2.0;
+            if(this.x>canvas.width-50) this.dir=-1;
+            if(this.x<50) this.dir=1;
+        }
+        this.shootTimer++;
+        if(this.shootTimer>25){
+            this.shootRing();
+            this.shootTimer=0;
+        }
+    }
+    shootRing(){
+        for(let i=0;i<16;i++){
+            const ang = (Math.PI*2/16)*i;
+            enemyBullets.push({
+                x:this.x,y:this.y,
+                r:6,
+                vx:Math.cos(ang)*3.2,
+                vy:Math.sin(ang)*3.2
+            })
+        }
+    }
+    draw(){
+        ctx.save();
+        ctx.shadowBlur=22;ctx.shadowColor="#ff2244";
+        ctx.fillStyle="#ff2244";
+        ctx.fillRect(this.x-45,this.y-25,this.w,this.h);
+        ctx.fillStyle="#fff";
+        ctx.fillRect(this.x-40,this.y-38,80,8);
+        ctx.fillStyle="#0f0";
+        ctx.fillRect(this.x-40,this.y-38,80*(this.hp/this.maxHp),8);
+        ctx.restore();
+    }
+}
+
+//粒子爆炸
+function spawnExplosion(x,y,count=20,color="#0ff"){
+    for(let i=0;i<count;i++){
+        const ang = Math.random()*Math.PI*2;
+        const spd = Math.random()*4+1;
+        particles.push({
+            x,y,
+            vx:Math.cos(ang)*spd,
+            vy:Math.sin(ang)*spd,
+            life:35,
+            color:color,
+            size:Math.random()*4+1
+        })
+    }
+    game.screenShake = 8;
+}
+
+function spawnPowerUp(x,y){
+    const types = ["hp","power"];
+    powerUps.push({
+        x,y,r:10,
+        type:types[Math.floor(Math.random()*types.length)],
+        vy:1.4
+    })
+}
+
+// ==========【修改】发射子弹，按power等级生成多向子弹 =========
+function fireBullet(){
+    playSound("shoot");
+    const p = player;
+    const lv = game.power;
+    if(lv === 1){
+        bullets.push({x:p.x,y:p.y-16,r:4,vy:-9});
+    }else if(lv ===2){
+        bullets.push({x:p.x-12,y:p.y-8,r:4,vy:-9});
+        bullets.push({x:p.x+12,y:p.y-8,r:4,vy:-9});
+    }else if(lv ===3){
+        bullets.push({x:p.x-16,y:p.y-4,r:4,vy:-9, vx:-0.8});
+        bullets.push({x:p.x,    y:p.y-16,r:4,vy:-9});
+        bullets.push({x:p.x+16,y:p.y-4,r:4,vy:-9, vx:0.8});
+    }
+}
+
+function circleRect(px,py,pr,rx,ry,rw,rh){
+    const cx = Math.max(rx-rw/2, Math.min(px, rx+rw/2));
+    const cy = Math.max(ry-rh/2, Math.min(py, ry+rh/2));
+    const dx = px-cx; const dy=py-cy;
+    return dx*dx+dy*dy < pr*pr;
+}
+
+// ========== 存档读档 localStorage ==========
+function saveGame(){
+    const saveData = {
+        score:game.score,
+        hp:game.hp,
+        maxHp:game.maxHp,
+        power:game.power,
+        combo:game.combo,
+        comboTimer:game.comboTimer,
+        multiplier:game.multiplier,
+        bossActive:game.bossActive
+    };
+    localStorage.setItem("neonShooterSave", JSON.stringify(saveData));
+    playSound("save");
+    alert("✅存档成功！");
+}
+function loadGame(){
+    const raw = localStorage.getItem("neonShooterSave");
+    if(!raw){
+        alert("❌无存档数据");
+        return;
+    }
+    const saveData = JSON.parse(raw);
+    game.score = saveData.score;
+    game.hp = saveData.hp;
+    game.maxHp = saveData.maxHp;
+    game.power = saveData.power;
+    game.combo = saveData.combo;
+    game.comboTimer = saveData.comboTimer;
+    game.multiplier = saveData.multiplier;
+    game.bossActive = saveData.bossActive;
+    scoreDom.innerText=game.score;
+    hpDom.innerText=game.hp;
+    comboDom.innerText=game.combo;
+    multiDom.innerText=game.multiplier.toFixed(1);
+    powerLvDom.innerText=game.power;
+    bossStatusDom.innerText = game.bossActive ? "BOSS登场" : "未登场";
+    playSound("load");
+    alert("✅读档成功！");
+}
+
+// ========== 敌人生成循环（随机生成3种敌人） ==========
+function startEnemySpawn(){
+    if(enemySpawnTimer) clearTimeout(enemySpawnTimer);
+    function spawnLoop(){
+        if(game.state!=="play" || game.gameOver) return;
+        //随机三种敌人
+        const r = Math.random();
+        let enemy;
+        if(r<0.5){
+            enemy = new EnemyNormal();
+        }else if(r<0.8){
+            enemy = new EnemySwing();
+        }else{
+            enemy = new EnemyRush();
+        }
+        enemies.push(enemy);
+        const interval = Math.max(320,1100-game.score*2.4);
+        enemySpawnTimer = setTimeout(spawnLoop, interval);
+    }
+    spawnLoop();
+}
+
+// ========== 游戏更新 ==========
+function update(){
+    const now = performance.now();
+    const delta = now - lastTime;
+    fps = Math.round(1000/delta);
+    lastTime = now;
+
+    //更新视差星空
+    for(let layer of starsLayers){
+        for(let star of layer.list){
+            star.y += layer.speed;
+            if(star.y>canvas.height){
+                star.y=0;
+                star.x = Math.random()*canvas.width;
+            }
+        }
+    }
+
+    if(game.state === "menu"){
+        game.menuTimer--;
+        if(keys["Space"] || touchActive){
+            initAudio();
+            game.state = "play";
+            resetGame();
+            startEnemySpawn();
+        }
+        return;
+    }
+    if(game.state === "pause") return;
+    if(game.gameOver) return;
+
+    if(shootCooldown>0) shootCooldown--;
+    //电脑空格 或者 手机触摸长按持续射击
+    if((keys["Space"] || touchActive) && shootCooldown <= 0){
+        fireBullet();
+        shootCooldown = SHOOT_DELAY;
+    }
+
+    if(game.screenShake>0) game.screenShake *=0.8;
+    if(game.invincible>0) game.invincible--;
+
+    if(game.comboTimer>0){
+        game.comboTimer--;
+        if(game.comboTimer <=0){
+            game.combo=0;
+            game.multiplier=1.0;
+            comboDom.innerText=game.combo;
+            multiDom.innerText=game.multiplier.toFixed(1);
+        }
+    }
+
+    player.update();
+
+    //玩家子弹
+    for(let i=bullets.length-1;i>=0;i--){
+        const b = bullets[i];
+        b.y += b.vy;
+        if(b.vx) b.x += b.vx;
+        if(b.y < -10) bullets.splice(i,1);
+    }
+    //敌人子弹
+    for(let i=enemyBullets.length-1;i>=0;i--){
+        const b = enemyBullets[i];
+        b.x += b.vx||0;
+        b.y += b.vy;
+        if(b.y>canvas.height||b.x<0||b.x>canvas.width) enemyBullets.splice(i,1);
+        if(game.invincible<=0 && circleRect(b.x,b.y,b.r,player.x,player.y,player.w,player.h)){
+            game.hp--;hpDom.innerText=game.hp;
+            game.invincible = 120;
+            spawnExplosion(player.x,player.y,25,"#0ff");
+            enemyBullets.splice(i,1);
+            game.combo=0;game.multiplier=1.0;
+            comboDom.innerText=game.combo;
+            multiDom.innerText=game.multiplier.toFixed(1);
+            if(game.hp<=0){
+                game.gameOver=true;
+                playSound("gameover");
+            }
+        }
+    }
+
+    //道具
+    for(let i=powerUps.length-1;i>=0;i--){
+        const pu = powerUps[i];
+        pu.y += pu.vy;
+        if(pu.y>canvas.height){powerUps.splice(i,1);continue}
+        if(circleRect(pu.x,pu.y,pu.r,player.x,player.y,player.w,player.h)){
+            playSound("pickup");
+            if(pu.type === "hp"){
+                game.hp=Math.min(game.maxHp,game.hp+1);
+            }else{
+                //【修复】黄色道具：等级+1，不超过上限
+                game.power = Math.min(game.powerMax, game.power + 1);
+                powerLvDom.innerText = game.power;
+            }
+            hpDom.innerText=game.hp;
+            spawnExplosion(pu.x,pu.y,10,"#ff0");
+            powerUps.splice(i,1);
+        }
+    }
+
+    //敌人更新
+    for(let i=enemies.length-1;i>=0;i--){
+        const e = enemies[i];
+        e.update();
+        if(e.y>canvas.height){enemies.splice(i,1);continue}
+        for(let j=bullets.length-1;j>=0;j--){
+            const b = bullets[j];
+            if(circleRect(b.x,b.y,b.r,e.x,e.y,e.w,e.h)){
+                playSound("explode");
+                spawnExplosion(e.x,e.y,22,"#f28");
+                game.combo++;
+                game.comboTimer = 120;
+                game.multiplier = Math.min(3.0, 1.0 + game.combo * 0.1);
+                const addScore = Math.floor(15 * game.multiplier);
+                game.score += addScore;
+                scoreDom.innerText=game.score;
+                comboDom.innerText=game.combo;
+                multiDom.innerText=game.multiplier.toFixed(1);
+                if(Math.random()<0.25) spawnPowerUp(e.x,e.y);
+                enemies.splice(i,1);
+                bullets.splice(j,1);
+                if(game.score >=100 && !game.bossActive){
+                    boss = new Boss();
+                    game.bossActive=true;
+                    bossStatusDom.innerText="BOSS登场";
+                    playSound("bossAppear");
+                }
+                break;
+            }
+        }
+        if(game.invincible<=0 && circleRect(e.x,e.y,e.w/2,player.x,player.y,player.w,player.h)){
+            playSound("explode");
+            spawnExplosion(e.x,e.y,25,"#f28");
+            game.hp--;hpDom.innerText=game.hp;
+            game.invincible=120;
+            game.combo=0;game.multiplier=1.0;
+            comboDom.innerText=game.combo;
+            multiDom.innerText=game.multiplier.toFixed(1);
+            enemies.splice(i,1);
+            if(game.hp<=0){
+                game.gameOver=true;
+                playSound("gameover");
+            }
+        }
+    }
+
+    //BOSS
+    if(boss){
+        boss.update();
+        for(let i=bullets.length-1;i>=0;i--){
+            const b=bullets[i];
+            if(circleRect(b.x,b.y,b.r,boss.x,boss.y,boss.w,boss.h)){
+                boss.hp -=1;
+                spawnExplosion(b.x,b.y,6,"#ff4466");
+                bullets.splice(i,1);
+                if(boss.hp <=0){
+                    playSound("bossDead");
+                    spawnExplosion(boss.x,boss.y,80,"#ff2244");
+                    game.score += Math.floor(200 * game.multiplier);
+                    scoreDom.innerText=game.score;
+                    boss=null;game.bossActive=false;
+                    bossStatusDom.innerText="BOSS已击杀";
+                }
+                break;
+            }
+        }
+    }
+
+    //粒子
+    for(let i=particles.length-1;i>=0;i--){
+        const p=particles[i];
+        p.x += p.vx; p.y += p.vy;
+        p.life--;
+        p.vx *=0.94; p.vy *=0.94;
+        if(p.life<=0) particles.splice(i,1);
+    }
+}
+
+// ========== 渲染 ==========
+function draw(){
+    ctx.save();
+    if(game.screenShake>0){
+        ctx.translate((Math.random()-0.5)*game.screenShake, (Math.random()-0.5)*game.screenShake);
+    }
+    ctx.fillStyle="#050512";
+    ctx.fillRect(0,0,canvas.width,canvas.height);
+
+    //绘制多层视差星空
+    for(let layer of starsLayers){
+        for(let star of layer.list){
+            ctx.fillStyle=`rgba(255,255,255,${0.2+layer.speed*0.3})`;
+            ctx.beginPath();
+            ctx.arc(star.x,star.y,star.size,0,Math.PI*2);
+            ctx.fill();
+        }
+    }
+
+    //开场菜单
+    if(game.state === "menu"){
+        ctx.save();
+        ctx.fillStyle="#0ff";
+        ctx.shadowBlur=25;ctx.shadowColor="#0ff";
+        ctx.font="bold 42px Microsoft Yahei";
+        ctx.textAlign="center";
+        ctx.fillText("赛博霓虹弹幕", canvas.width/2, canvas.height/2 - 80);
+        ctx.font="20px Microsoft Yahei";
+        const blink = Math.sin(Date.now()/200)>0;
+        if(blink){
+            ctx.fillText("【电脑按空格 / 手机触摸屏幕】开始游戏", canvas.width/2, canvas.height/2-20);
+        }
+        ctx.font="16px Microsoft Yahei";
+        ctx.fillText("电脑：方向键移动｜空格射击｜P暂停｜S存档 L读档", canvas.width/2, canvas.height/2+20);
+        ctx.fillText("手机：手指拖动飞船，长按画布持续射击", canvas.width/2, canvas.height/2+50);
+        ctx.restore();
+        ctx.restore();
+        return;
+    }
+
+    //暂停遮罩
+    if(game.state === "pause"){
+        ctx.fillStyle="rgba(0,0,0,0.65)";
+        ctx.fillRect(0,0,canvas.width,canvas.height);
+        ctx.save();
+        ctx.fillStyle="#0ff";
+        ctx.shadowBlur=30;ctx.shadowColor="#0ff";
+        ctx.font="bold 48px Microsoft Yahei";
+        ctx.textAlign="center";
+        const blink = Math.sin(Date.now()/220)>0;
+        ctx.fillText("游戏暂停", canvas.width/2, canvas.height/2-30);
+        if(blink){
+            ctx.font="20px Microsoft Yahei";
+            ctx.fillText("电脑按【P】继续游戏", canvas.width/2, canvas.height/2+30);
+        }
+        ctx.restore();
+    }
+
+    powerUps.forEach(pu=>{
+        ctx.save();
+        ctx.shadowBlur=14;
+        ctx.shadowColor=pu.type==="hp"?"#0f0":"#ff0";
+        ctx.fillStyle=pu.type==="hp"?"#0f0":"#ff0";
+        ctx.beginPath();ctx.arc(pu.x,pu.y,pu.r,0,Math.PI*2);ctx.fill();
+        ctx.restore();
+    })
+
+    enemies.forEach(e=>e.draw());
+    if(boss) boss.draw();
+
+    ctx.save();
+    ctx.shadowBlur=12;ctx.shadowColor="#0ff";
+    ctx.fillStyle="#0ff";
+    bullets.forEach(b=>{
+        ctx.beginPath();ctx.arc(b.x,b.y,b.r,0,Math.PI*2);ctx.fill();
+    })
+    ctx.restore();
+
+    ctx.save();
+    ctx.shadowBlur=10;ctx.shadowColor="#f28";
+    ctx.fillStyle="#f28";
+    enemyBullets.forEach(b=>{
+        ctx.beginPath();ctx.arc(b.x,b.y,b.r,0,Math.PI*2);ctx.fill();
+    })
+    ctx.restore();
+
+    particles.forEach(p=>{
+        ctx.save();
+        ctx.globalAlpha = p.life/35;
+        ctx.fillStyle=p.color;
+        ctx.beginPath();ctx.arc(p.x,p.y,p.size,0,Math.PI*2);ctx.fill();
+        ctx.restore();
+    })
+
+    player.draw();
+
+    // ========== 美化玩家血条UI ==========
+    const barX = 15;
+    const barY = 15;
+    const barW = 160;
+    const barH = 20;
+    //外发光边框
+    ctx.save();
+    ctx.shadowBlur=12;
+    ctx.shadowColor="#0ff";
+    ctx.strokeStyle="#0ff";
+    ctx.lineWidth=2;
+    ctx.strokeRect(barX,barY,barW,barH);
+    ctx.restore();
+    //背景深色
+    ctx.fillStyle="#001122";
+    ctx.fillRect(barX+2,barY+2,barW-4,barH-4);
+    //渐变血条
+    const hpRatio = game.hp / game.maxHp;
+    const grad = ctx.createLinearGradient(barX, barY, barX+barW, barY);
+    if(hpRatio>0.5){
+        grad.addColorStop(0,"#00ff88");grad.addColorStop(1,"#00ffcc");
+    }else if(hpRatio>0.25){
+        grad.addColorStop(0,"#ffcc00");grad.addColorStop(1,"#ff8800");
+    }else{
+        grad.addColorStop(0,"#ff2222");grad.addColorStop(1,"#ff6666");
+    }
+    ctx.fillStyle=grad;
+    ctx.fillRect(barX+2,barY+2,(barW-4)*hpRatio,barH-4);
+    //文字
+    ctx.fillStyle="#fff";
+    ctx.font="14px Microsoft Yahei";
+    ctx.textAlign="center";
+    ctx.fillText(`HP ${game.hp}/${game.maxHp}`, barX+barW/2, barY+15);
+
+    //右上角FPS
+    ctx.save();
+    ctx.fillStyle="#0ff";
+    ctx.font="14px sans-serif";
+    ctx.textAlign="right";
+    ctx.fillText(`FPS:${fps}`, canvas.width-8, 20);
+    ctx.restore();
+
+    // =========【新增：游戏结束画面文字提示】 =========
+    if(game.gameOver){
+        ctx.save();
+        ctx.fillStyle="rgba(0,0,0,0.65)";
+        ctx.fillRect(0,0,canvas.width,canvas.height);
+        ctx.fillStyle="#ff3344";
+        ctx.shadowBlur=25;ctx.shadowColor="#ff3344";
+        ctx.font="bold 44px Microsoft Yahei";
+        ctx.textAlign="center";
+        ctx.fillText("游戏结束", canvas.width/2, canvas.height/2 - 60);
+        ctx.font="22px Microsoft Yahei";
+        ctx.fillText(`最终得分：${game.score}`, canvas.width/2, canvas.height/2 - 10);
+        const blink = Math.sin(Date.now()/200)>0;
+        if(blink){
+            ctx.fillText("点击画布重新开始", canvas.width/2, canvas.height/2 + 40);
+        }
+        ctx.restore();
+    }
+
+    ctx.restore();
+}
+
+//重置游戏
+function resetGame(){
+    game.score=0;game.hp=3;game.maxHp=5;game.gameOver=false;game.bossActive=false;game.power=1;
+    game.screenShake=0;
+    game.invincible=0;
+    game.combo=0;
+    game.comboTimer=0;
+    game.multiplier=1.0;
+    shootCooldown = 0;
+    scoreDom.innerText=0;hpDom.innerText=game.hp;bossStatusDom.innerText="未登场";
+    comboDom.innerText=0;multiDom.innerText="1.0";
+    powerLvDom.innerText=game.power;
+    bullets=[];enemyBullets=[];enemies=[];particles=[];powerUps=[];boss=null;
+    player = new Player();
+    initParallaxStars();
+}
+
+//键盘监听
+document.addEventListener("keydown",e=>{
+    keys[e.code] = true;
+    //P暂停
+    if(e.code === "KeyP"){
+        if(game.state === "play"){
+            game.state = "pause";
+            playSound("pause");
+        }else if(game.state === "pause"){
+            game.state = "play";
+            playSound("pause");
+            startEnemySpawn();
+        }
+    }
+    //S存档
+    if(e.code === "KeyS" && game.state === "play"){
+        saveGame();
+    }
+    //L读档
+    if(e.code === "KeyL"){
+        initAudio();
+        loadGame();
+    }
+    if(game.gameOver && e.code === "Space"){
+        resetGame();
+        startEnemySpawn();
+    }
+})
+document.addEventListener("keyup",e=>{
+    keys[e.code] = false;
+})
+
+//主循环
+function loop(){
+    update();draw();
+    requestAnimationFrame(loop);
+}
+
+//初始化
+initParallaxStars();
+loop();
+</script>
+</body>
+</html>
